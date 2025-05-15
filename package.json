@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "compile": "tsc -p .",
-    "start": "node build/src/index.js",
+    "start": "node scripts/start.js",
+    "start:meta": "NODE_ENV=meta node build/src/index.js",
+    "start:dev": "NODE_ENV=dev ts-node src/index.ts",
     "dev": "ts-node src/index.ts"
   },
   "keywords": [],
@@ -14,7 +16,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "discord.js": "^14.19.3"
+    "discord.js": "^14.19.3",
+    "mysql2": "^3.14.1",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
