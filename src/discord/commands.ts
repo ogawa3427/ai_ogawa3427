@@ -6,8 +6,44 @@ import { createTables, pool } from '../database';
 import { ChromaClient } from "chromadb";
 import axios from "axios";
 
+// 設定の型定義
+interface ChromaConfig {
+    host: string;
+    port: string;
+    collection: string;
+}
+
+interface EnvironmentConfig {
+    'sv-id': string;
+    mysql: {
+        host: string;
+        port: string;
+        user: string;
+        password: string;
+        database: string;
+    };
+    chroma: ChromaConfig;
+}
+
+interface Config {
+    token: string;
+    guildId: string;
+    dev: EnvironmentConfig;
+    meta: EnvironmentConfig;
+}
+
 // 設定を取得
-const config = getConfig();
+const config = getConfig() as unknown as Config;
+
+// Chromaの接続情報を取得する関数
+function getChromaConfig() {
+    const env = process.env.NODE_ENV === 'production' ? 'meta' : 'dev';
+    const chromaConfig = config[env].chroma;
+    return {
+        url: `http://${chromaConfig.host}:${chromaConfig.port}`,
+        collection: chromaConfig.collection
+    };
+}
 
 // スラッシュコマンドの登録とイベント処理を設定
 export function setupCommands() {
@@ -45,6 +81,27 @@ export function setupCommands() {
                     name: 'vectorize-history',
                     description: '未処理のメッセージ履歴をベクトル化してDBに保存します',
                     type: ApplicationCommandType.ChatInput,
+                },
+                {
+                    name: 'search',
+                    description: 'メッセージ履歴から類似の内容を検索します',
+                    type: ApplicationCommandType.ChatInput,
+                    options: [
+                        {
+                            name: 'query',
+                            description: '検索クエリ',
+                            type: 3, // STRING
+                            required: true
+                        },
+                        {
+                            name: 'limit',
+                            description: '検索結果の最大件数',
+                            type: 4, // INTEGER
+                            required: false,
+                            min_value: 1,
+                            max_value: 10
+                        }
+                    ]
                 }
             ];
 
@@ -73,14 +130,12 @@ export function setupCommands() {
             await interaction.deferReply();
 
             try {
-                // config.json に chromaUrl, ollamaEndpoint, embedModel があればそれを使用し、
-                // なければ process.env から取得、それでもなければデフォルト値を使用
-                const CHROMA_URL = (config as any).chromaUrl || process.env.CHROMA_URL || "http://localhost:8000";
+                const { url: CHROMA_URL, collection: COLLECTION_NAME } = getChromaConfig();
                 const OLLAMA_ENDPOINT = (config as any).ollamaEndpoint || process.env.OLLAMA_ENDPOINT || "http://localhost:11434";
                 const EMBED_MODEL = (config as any).embedModel || process.env.EMBED_MODEL || "mxbai-embed-large";
 
                 const chroma = new ChromaClient({ path: CHROMA_URL });
-                const collection = await chroma.getOrCreateCollection({ name: "discord_history" });
+                const collection = await chroma.getOrCreateCollection({ name: COLLECTION_NAME });
 
                 const [rows] = await pool.execute(
                     `SELECT id, channel_id, content FROM messages WHERE indexed = 0 LIMIT 10000`
@@ -151,6 +206,67 @@ export function setupCommands() {
             } catch (error: any) {
                 console.error('ベクトル化処理中にエラーが発生しました:', error.message, error.stack);
                 await interaction.editReply('処理中にエラーが発生しました。詳細はログを確認してください。');
+            }
+        } else if (interaction.commandName === 'search') {
+            await interaction.deferReply();
+
+            try {
+                const query = interaction.options.getString('query', true);
+                const limit = interaction.options.getInteger('limit') || 5;
+
+                const { url: CHROMA_URL, collection: COLLECTION_NAME } = getChromaConfig();
+                const OLLAMA_ENDPOINT = (config as any).ollamaEndpoint || process.env.OLLAMA_ENDPOINT || "http://localhost:11434";
+                const EMBED_MODEL = (config as any).embedModel || process.env.EMBED_MODEL || "mxbai-embed-large";
+
+                // クエリの埋め込みを取得
+                const embedRes = await axios.post(
+                    `${OLLAMA_ENDPOINT}/api/embeddings`,
+                    { model: EMBED_MODEL, prompt: query }
+                );
+                const queryVec = embedRes.data.embedding;
+
+                if (!Array.isArray(queryVec)) {
+                    throw new Error("埋め込み取得エラー");
+                }
+
+                // Chromaクライアント初期化
+                const chroma = new ChromaClient({ path: CHROMA_URL });
+                const collection = await chroma.getCollection({ name: COLLECTION_NAME });
+                if (!collection) throw new Error(`${COLLECTION_NAME} コレクションが見つかりません`);
+
+                // 類似検索
+                const results = await collection.query({
+                    queryEmbeddings: [queryVec],
+                    nResults: limit
+                }) as any;
+
+                console.log(results);
+
+                // 結果の整形
+                const ids = results.ids[0];
+                const metadatas = results.metadatas[0];
+                const distances = results.distances[0];
+
+                if (!ids || ids.length === 0) {
+                    await interaction.editReply("類似するメッセージが見つかりませんでした。");
+                    return;
+                }
+
+                const response = ids.map((id: string, i: number) => {
+                    const similarity = Number((1 - distances[i]).toFixed(4));
+                    const content = metadatas[i].content;
+                    const relevance = similarity > 0.8 ? '🔍 非常に類似' : 
+                                    similarity > 0.6 ? '📌 類似' : 
+                                    '💭 やや関連';
+                    
+                    return `${i + 1}. ${relevance} (類似度: ${similarity})\n${content}`;
+                }).join('\n\n');
+
+                await interaction.editReply(`検索クエリ: "${query}"\n\n検索結果 (${ids.length}件):\n\n${response}`);
+
+            } catch (error: any) {
+                console.error('検索処理中にエラーが発生しました:', error.message, error.stack);
+                await interaction.editReply('検索中にエラーが発生しました。詳細はログを確認してください。');
             }
         }
     });
