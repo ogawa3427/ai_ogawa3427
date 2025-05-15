@@ -16,6 +16,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "chromadb": "^2.4.4",
     "discord.js": "^14.19.3",
     "mysql2": "^3.14.1",
     "sqlite3": "^5.1.7"
