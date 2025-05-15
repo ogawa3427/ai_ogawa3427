@@ -17,8 +17,10 @@ export async function createTables() {
                 id VARCHAR(255) PRIMARY KEY,
                 server_id BIGINT NOT NULL,
                 name VARCHAR(255) NOT NULL,
+                parent_channel_id VARCHAR(255) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+                FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_channel_id) REFERENCES channels(id) ON DELETE CASCADE
             )`
         );
         await connection.query(

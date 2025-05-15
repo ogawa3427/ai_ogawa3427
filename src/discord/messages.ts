@@ -132,8 +132,8 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
             const threadChannelConnection = await pool.getConnection();
             try {
                 await threadChannelConnection.query(
-                    'INSERT INTO channels (id, server_id, name) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)',
-                    [thread.id, serverDbId, thread.name]
+                    'INSERT INTO channels (id, server_id, name, parent_channel_id) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), parent_channel_id = VALUES(parent_channel_id)',
+                    [thread.id, serverDbId, thread.name, channel.id]
                 );
                 console.log(`スレッド「${thread.name}」の情報をDBに保存しました。`);
 

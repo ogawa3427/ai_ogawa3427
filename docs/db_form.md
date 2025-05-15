@@ -1,4 +1,3 @@
-
 まずはDiscordのデータが入ってるJSONファイルを見てみるわ。クソデカJSONからちゃんとしたDBスキーマ作るの面倒くさいけど、確かにSQLの方がマシやな。
 
 Read file: build/output/discord_data_2025-05-15T14-55-40-044Z.json
@@ -21,8 +20,10 @@ CREATE TABLE channels (
     id VARCHAR(20) PRIMARY KEY,
     server_id INT NOT NULL,
     name VARCHAR(255) NOT NULL,
+    parent_channel_id VARCHAR(20) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );
 ```
 
