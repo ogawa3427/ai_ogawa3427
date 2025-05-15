@@ -44,6 +44,7 @@ CREATE TABLE messages (
     channel_id VARCHAR(20) NOT NULL,
     user_id INT NOT NULL,
     content TEXT,
+    indexed BOOL DEFAULT FALSE,
     created_at DATETIME NOT NULL,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

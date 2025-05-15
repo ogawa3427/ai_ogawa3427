@@ -37,6 +37,7 @@ export async function createTables() {
                 channel_id VARCHAR(255) NOT NULL,
                 user_id BIGINT NOT NULL,
                 content TEXT,
+                indexed BOOLEAN DEFAULT FALSE,
                 created_at DATETIME NOT NULL,
                 FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
