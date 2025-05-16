@@ -287,17 +287,7 @@ export function setupCommands() {
 
         // メンションされているかチェック
         if (message.mentions.has(client.user!)) {
-            console.log(message);
-
-            // CREATE TABLE channels (
-            //     id VARCHAR(20) PRIMARY KEY,
-            //     server_id INT NOT NULL,
-            //     name VARCHAR(255) NOT NULL,
-            //     parent_channel_id VARCHAR(20) NULL,
-            //     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            //     FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
-            //     FOREIGN KEY (parent_channel_id) REFERENCES channels(id) ON DELETE CASCADE
-            // );
+            // console.log(message);
 
             try {
                 // スレッド内かを確かめるためにSQL - channelsテーブル叩く
@@ -314,11 +304,105 @@ export function setupCommands() {
                         name: `AIとの会話 - ${message.author.username}`,
                         autoArchiveDuration: 60
                     });
-                    await thread.send('呼びましたか？何かお手伝いできることはありますか？');
+                    await thread.send('処理を開始しました。しばらくお待ちください...');
                 } else {
                     // スレッド内またはDMの場合は通常の返信
-                    await message.reply('呼びましたか？何かお手伝いできることはありますか？');
+                    await message.reply('処理を開始しました。しばらくお待ちください...');
                 }
+
+                // こっから共通
+                const { url: CHROMA_URL, collection: COLLECTION_NAME } = getChromaConfig();
+                const OLLAMA_ENDPOINT = (config as any).ollamaEndpoint || process.env.OLLAMA_ENDPOINT || "http://localhost:11434";
+                const EMBED_MODEL = (config as any).embedModel || process.env.EMBED_MODEL || "mxbai-embed-large";
+                const MODEL_NAME = (config as any).llmModel || process.env.LLM_MODEL || "qwen3:8b"
+                
+                try {
+                    // 1) クエリ再構築 - LLMにキーワード抽出を依頼
+                    const rewritePrompt = 
+                        `以下のユーザー発話から、VectorDB検索用の短いキーワードを抽出してください。\n\n` +
+                        `User: ${message.content}\n\n` +
+                        `Keywords:`;
+                    
+                    const rewriteRes = await axios.post(
+                        `${OLLAMA_ENDPOINT}/api/generate`,
+                        { 
+                            model: MODEL_NAME,
+                            prompt: rewritePrompt, 
+                            max_tokens: 32, 
+                            stop: ["\n"] 
+                        }
+                    );
+                    
+                    const rewritten = rewriteRes.data.response.trim();
+                    console.log(`元のクエリ: "${message.content}"`);
+                    console.log(`再構築クエリ: "${rewritten}"`);
+                    
+                    // 2) 再構築後のフレーズで埋め込み生成
+                    const embedRes = await axios.post(
+                        `${OLLAMA_ENDPOINT}/api/embeddings`,
+                        { model: EMBED_MODEL, prompt: rewritten }
+                    );
+                    const queryVec = embedRes.data.embedding;
+                    
+                    if (!Array.isArray(queryVec)) {
+                        throw new Error("埋め込み取得エラー");
+                    }
+                    
+                    // 3) Chromaクライアント初期化
+                    const chroma = new ChromaClient({ path: CHROMA_URL });
+                    const collection = await chroma.getCollection({ name: COLLECTION_NAME });
+                    if (!collection) throw new Error(`${COLLECTION_NAME} コレクションが見つかりません`);
+                    
+                    // 4) 類似検索
+                    const limit = 5; // 検索結果数
+                    const results = await collection.query({
+                        queryEmbeddings: [queryVec],
+                        nResults: limit
+                    }) as any;
+                    
+                    // 5) 結果の整形
+                    const ids = results.ids[0];
+                    const metadatas = results.metadatas[0];
+                    const distances = results.distances[0];
+                    
+                    let responseText = "";
+                    
+                    if (!ids || ids.length === 0) {
+                        responseText = "関連する過去の会話が見つかりませんでした。";
+                    } else {
+                        const contextData = ids.map((id: string, i: number) => {
+                            const similarity = Number((1 - distances[i]).toFixed(4));
+                            const content = metadatas[i].content;
+                            return { similarity, content };
+                        });
+                        
+                        // 類似度が高いものだけをフィルタリング (例: 0.6以上)
+                        const relevantContexts = contextData
+                            .filter((c: { similarity: number, content: string }) => c.similarity > 0.6)
+                            .map((c: { similarity: number, content: string }) => c.content)
+                            .join("\n\n");
+                            
+                        if (relevantContexts) {
+                            responseText = `関連する過去の会話が見つかりました:\n\n${relevantContexts}`;
+                        } else {
+                            responseText = "十分に関連性の高い過去の会話は見つかりませんでした。";
+                        }
+                    }
+                    
+                    // 6) Discord上で返信
+                    const channel = message.channel;
+                    // スレッド内かDMかに応じて適切な方法で返信
+                    if (channel.isThread() || parentChannelId) {
+                        await channel.send(responseText);
+                    } else {
+                        // スレッド未作成の場合（ここには通常到達しないはず）
+                        await message.reply(responseText);
+                    }
+                } catch (error: any) {
+                    console.error('検索処理中にエラーが発生しました:', error.message, error.stack);
+                    await message.reply('処理中にエラーが発生しました。詳細はログを確認してください。');
+                }
+
             } catch (error) {
                 console.error('メンションへの返信でエラーが発生しました:', error);
             }
