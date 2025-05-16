@@ -13,6 +13,11 @@ export type ConfigType = {
             password: string;
             database: string;
         }
+        chroma: {
+            host: string;
+            port: string;
+            collection: string;
+        }
     };
     meta: {
         'sv-id': string;
@@ -22,6 +27,11 @@ export type ConfigType = {
             user: string;
             password: string;
             database: string;
+        }
+        chroma: {
+            host: string;
+            port: string;
+            collection: string;
         }
     };
 };

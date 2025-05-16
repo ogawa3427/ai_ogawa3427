@@ -13,6 +13,7 @@ export function getConfig() {
     return {
         token: typedConfig.token,
         guildId: typedConfig[typedEnv]["sv-id"],
-        mysql: typedConfig[typedEnv].mysql
+        mysql: typedConfig[typedEnv].mysql,
+        chroma: typedConfig[typedEnv].chroma
     };
 } 

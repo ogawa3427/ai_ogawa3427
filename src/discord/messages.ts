@@ -2,13 +2,14 @@ import { Collection, Message, TextChannel, ThreadChannel } from 'discord.js';
 import { pool } from '../database';
 
 // メッセージ取得処理のメイン関数
-export async function fetchMessages(guild: any, isDifferential: boolean = false): Promise<string> {
+export async function fetchMessages(guild: any, isDifferential: boolean = false, progressCallback?: (message: string) => Promise<void>): Promise<string> {
     if (!guild) {
         console.log('サーバーが見つかりません');
         return 'サーバーが見つかりません';
     }
     
     console.log(`サーバー「${guild.name}」の情報を取得します...`);
+    await progressCallback?.(`サーバー「${guild.name}」の情報を取得します...`);
     
     let afterDate: Date | undefined = undefined;
 
@@ -28,8 +29,10 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
     
     if (afterDate) {
         console.log(`${afterDate.toISOString()} 以降のメッセージを取得します。`);
+        await progressCallback?.(`${afterDate.toISOString()} 以降のメッセージを取得します。`);
     } else {
         console.log('全てのメッセージを取得します。');
+        await progressCallback?.('全てのメッセージを取得します。');
     }
 
     let serverDbId: number | undefined;
@@ -50,6 +53,7 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
             serverDbId = result.insertId;
         }
         console.log(`サーバー「${guild.name}」の情報をDBに保存/更新しました。`);
+        await progressCallback?.(`サーバー「${guild.name}」の情報をDBに保存/更新しました。`);
     } catch (error) {
         console.error(`サーバー「${guild.name}」のDB保存中にエラー:`, error);
         return 'サーバー情報の保存中にエラーが発生しました。';
@@ -67,9 +71,17 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
     );
     
     console.log(`テキストチャンネル数: ${textChannels.size}`);
+    await progressCallback?.(`テキストチャンネル数: ${textChannels.size}`);
+    
+    let processedChannels = 0;
+    let totalMessages = 0;
+    let totalThreads = 0;
+    let totalChannels = textChannels.size;
     
     for (const channel of textChannels.values()) {
+        processedChannels++;
         console.log(`\n===== チャンネル: ${channel.name} =====`);
+        await progressCallback?.(`チャンネル処理中: ${channel.name} (${processedChannels}/${textChannels.size})`);
         
         const channelConnection = await pool.getConnection();
         try {
@@ -87,7 +99,8 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
         
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        const messages = await getChannelMessages(channel, afterDate);
+        const messages = await getChannelMessages(channel, afterDate, progressCallback);
+        totalMessages += messages.size;
 
         const messageConnection = await pool.getConnection();
         try {
@@ -118,6 +131,7 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
                 }
             }
             console.log(`チャンネル「${channel.name}」のメッセージ ${messages.size} 件をDBに保存しました。`);
+            await progressCallback?.(`チャンネル「${channel.name}」のメッセージ ${messages.size} 件をDBに保存しました。`);
         } catch (error) {
             console.error(`チャンネル「${channel.name}」のメッセージDB保存中にエラー:`, error);
         } finally {
@@ -125,8 +139,11 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
         }
         
         const threads = await getChannelThreads(channel);
+        totalThreads += threads.length;
+        let processedThreads = 0;
         
         for (const thread of threads) {
+            processedThreads++;
             await new Promise(resolve => setTimeout(resolve, 1000));
             
             const threadChannelConnection = await pool.getConnection();
@@ -136,8 +153,10 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
                     [thread.id, serverDbId, thread.name, channel.id]
                 );
                 console.log(`スレッド「${thread.name}」の情報をDBに保存しました。`);
+                await progressCallback?.(`スレッド処理中: ${thread.name} (${processedThreads}/${threads.length})`);
 
-                const threadMessages = await getThreadMessages(thread, afterDate);
+                const threadMessages = await getThreadMessages(thread, afterDate, progressCallback);
+                totalMessages += threadMessages.size;
                 
                 for (const msg of threadMessages.values()) {
                     let userDbId: number | undefined;
@@ -165,6 +184,7 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
                     }
                 }
                  console.log(`スレッド「${thread.name}」のメッセージ ${threadMessages.size} 件をDBに保存しました。`);
+                 await progressCallback?.(`スレッド「${thread.name}」のメッセージ ${threadMessages.size} 件をDBに保存しました。`);
             } catch (error) {
                 console.error(`スレッド「${thread.name}」のDB保存中にエラー:`, error);
             } finally {
@@ -173,11 +193,16 @@ export async function fetchMessages(guild: any, isDifferential: boolean = false)
         }
     }
     
-    return '処理が完了しました！データベースに保存しました。';
+    return `処理が完了しました！\n` +
+           `取得結果:\n` +
+           `- チャンネル数: ${totalChannels}件\n` +
+           `- スレッド数: ${totalThreads}件\n` +
+           `- メッセージ数: ${totalMessages}件\n` +
+           `データベースに保存しました。`;
 }
 
 // チャンネルのメッセージを取得する関数
-export async function getChannelMessages(channel: TextChannel | ThreadChannel, afterDate?: Date): Promise<Collection<string, Message>> {
+export async function getChannelMessages(channel: TextChannel | ThreadChannel, afterDate?: Date, progressCallback?: (message: string) => Promise<void>): Promise<Collection<string, Message>> {
     try {
         let allMessages = new Collection<string, Message>();
         let lastId: string | undefined;
@@ -204,12 +229,14 @@ export async function getChannelMessages(channel: TextChannel | ThreadChannel, a
             lastId = messages.last()?.id;
             
             console.log(`メッセージ取得中... 現在${allMessages.size}件`);
+            await progressCallback?.(`メッセージ取得中... 現在${allMessages.size}件`);
             
             if (messages.size < 100) break;
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         console.log(`合計メッセージ数: ${allMessages.size}`);
+        await progressCallback?.(`合計メッセージ数: ${allMessages.size}`);
         return allMessages;
     } catch (error) {
         console.error(`チャンネル「${channel.name}」のメッセージ取得中にエラー:`, error);
@@ -242,7 +269,7 @@ export async function getChannelThreads(channel: TextChannel): Promise<ThreadCha
 }
 
 // スレッドのメッセージを取得する関数
-export async function getThreadMessages(thread: ThreadChannel, afterDate?: Date): Promise<Collection<string, Message>> {
+export async function getThreadMessages(thread: ThreadChannel, afterDate?: Date, progressCallback?: (message: string) => Promise<void>): Promise<Collection<string, Message>> {
     try {
         console.log(`\n----- スレッド: ${thread.name} -----`);
         let allMessages = new Collection<string, Message>();
@@ -270,12 +297,14 @@ export async function getThreadMessages(thread: ThreadChannel, afterDate?: Date)
             lastId = messages.last()?.id;
 
             console.log(`メッセージ取得中... 現在${allMessages.size}件`);
+            await progressCallback?.(`メッセージ取得中... 現在${allMessages.size}件`);
             
             if (messages.size < 100) break;
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         console.log(`合計メッセージ数: ${allMessages.size}`);
+        await progressCallback?.(`合計メッセージ数: ${allMessages.size}`);
         
         return allMessages;
     } catch (error) {

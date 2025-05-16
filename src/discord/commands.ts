@@ -22,7 +22,7 @@ interface EnvironmentConfig {
         password: string;
         database: string;
     };
-    chroma: ChromaConfig;
+    // chroma: ChromaConfig;
 }
 
 interface Config {
@@ -30,6 +30,7 @@ interface Config {
     guildId: string;
     dev: EnvironmentConfig;
     meta: EnvironmentConfig;
+    chroma: ChromaConfig;
 }
 
 // 設定を取得
@@ -38,10 +39,12 @@ const config = getConfig() as unknown as Config;
 // Chromaの接続情報を取得する関数
 function getChromaConfig() {
     const env = process.env.NODE_ENV === 'production' ? 'meta' : 'dev';
-    const chromaConfig = config[env].chroma;
+    console.log(env);
+    console.log(config);
+    const chromaConfig = config.chroma;
     return {
         url: `http://${chromaConfig.host}:${chromaConfig.port}`,
-        collection: chromaConfig.collection
+        collection: "default"
     };
 }
 
@@ -120,7 +123,13 @@ export function setupCommands() {
             try {
                 const type = interaction.options.getString('type', true);
                 const isDifferential = type === 'diff';
-                const result = await fetchMessages(interaction.guild, isDifferential);
+                const result = await fetchMessages(
+                    interaction.guild, 
+                    isDifferential,
+                    async (message) => {
+                        await interaction.editReply(message);
+                    }
+                );
                 await interaction.editReply(result);
             } catch (error) {
                 console.error('エラーが発生しました:', error);
@@ -267,6 +276,51 @@ export function setupCommands() {
             } catch (error: any) {
                 console.error('検索処理中にエラーが発生しました:', error.message, error.stack);
                 await interaction.editReply('検索中にエラーが発生しました。詳細はログを確認してください。');
+            }
+        }
+    });
+
+    // メンションイベントのハンドラー
+    client.on(Events.MessageCreate, async (message) => {
+        // ボット自身のメッセージは無視
+        if (message.author.bot) return;
+
+        // メンションされているかチェック
+        if (message.mentions.has(client.user!)) {
+            console.log(message);
+
+            // CREATE TABLE channels (
+            //     id VARCHAR(20) PRIMARY KEY,
+            //     server_id INT NOT NULL,
+            //     name VARCHAR(255) NOT NULL,
+            //     parent_channel_id VARCHAR(20) NULL,
+            //     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            //     FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+            //     FOREIGN KEY (parent_channel_id) REFERENCES channels(id) ON DELETE CASCADE
+            // );
+
+            try {
+                // スレッド内かを確かめるためにSQL - channelsテーブル叩く
+                const channelId = message.channelId;
+                const [rows] = await pool.execute(
+                    `SELECT parent_channel_id FROM channels WHERE id = ?`,
+                    [channelId]
+                ) as any;
+                const parentChannelId = rows[0].parent_channel_id;
+                
+                // スレッド内でない場合かつ、テキストチャンネルまたはニュースチャンネルの場合のみスレッドを作成
+                if (!parentChannelId && (message.channel.isTextBased() && !message.channel.isDMBased())) {
+                    const thread = await message.startThread({
+                        name: `AIとの会話 - ${message.author.username}`,
+                        autoArchiveDuration: 60
+                    });
+                    await thread.send('呼びましたか？何かお手伝いできることはありますか？');
+                } else {
+                    // スレッド内またはDMの場合は通常の返信
+                    await message.reply('呼びましたか？何かお手伝いできることはありますか？');
+                }
+            } catch (error) {
+                console.error('メンションへの返信でエラーが発生しました:', error);
             }
         }
     });
